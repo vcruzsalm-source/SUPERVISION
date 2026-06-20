@@ -1194,7 +1194,7 @@ body {
       <div id="ai-panel-title">🤖 Asistente IA</div>
       <div id="ai-model-label"></div>
     </div>
-    <button class="ai-cfg-btn" onclick="abrirAIConfig()">⚙️ Clave API</button>
+    <button class="ai-cfg-btn" onclick="abrirAIConfig()">⚙️ Config IA</button>
   </div>
 
   <!-- Pantalla de configuración -->
@@ -1202,10 +1202,23 @@ body {
     <div class="ai-setup-box">
       <div style="font-size:36px;text-align:center;margin-bottom:10px;">🤖</div>
       <div style="font-size:18px;font-weight:800;text-align:center;margin-bottom:6px;">Asistente IA agéntico</div>
-      <div style="font-size:13px;color:var(--text-light);text-align:center;margin-bottom:20px;">Introduce tu API key de Anthropic para activar el asistente. Puede crear eventos, registrar incidencias, generar informes y mucho más.</div>
+      <div style="font-size:13px;color:var(--text-light);text-align:center;margin-bottom:20px;">Conecta cualquier IA compatible. La clave se guarda solo en este dispositivo.</div>
       <div class="form-group">
-        <label class="form-label">API Key de Anthropic</label>
-        <input id="ai-key-input" class="form-control" type="password" placeholder="sk-ant-api03-…">
+        <label class="form-label">Proveedor</label>
+        <select id="ai-provider-select" class="form-control" onchange="_aiProviderChange()">
+          <option value="anthropic">Anthropic (Claude)</option>
+          <option value="openai">OpenAI (GPT)</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="custom">Personalizado / Ollama</option>
+        </select>
+      </div>
+      <div class="form-group" id="ai-baseurl-group" style="display:none;">
+        <label class="form-label">URL base <span style="font-weight:400;color:var(--text-light);">(ej: http://localhost:11434/v1)</span></label>
+        <input id="ai-baseurl-input" class="form-control" type="text" placeholder="https://...">
+      </div>
+      <div class="form-group">
+        <label class="form-label">API Key <span id="ai-key-label-hint" style="font-weight:400;color:var(--text-light);">(sk-ant-…)</span></label>
+        <input id="ai-key-input" class="form-control" type="password" placeholder="Tu API key">
       </div>
       <div class="form-group">
         <label class="form-label">Modelo</label>
@@ -1214,9 +1227,10 @@ body {
           <option value="claude-sonnet-4-6">Claude Sonnet — Equilibrado</option>
           <option value="claude-opus-4-8">Claude Opus — Más capaz</option>
         </select>
+        <input id="ai-model-custom" class="form-control" type="text" placeholder="Nombre del modelo (ej: llama3, mistral…)" style="display:none;margin-top:6px;">
       </div>
       <button class="btn btn-full" onclick="guardarAIConfig()" style="background:#6366f1;color:white;border-radius:12px;padding:14px;font-size:15px;font-weight:700;border:none;cursor:pointer;">Activar asistente</button>
-      <div style="margin-top:12px;font-size:11px;color:var(--text-light);text-align:center;line-height:1.5;">La clave se guarda solo en este dispositivo. Se envía únicamente a la API de Anthropic para procesar tus mensajes.</div>
+      <div style="margin-top:12px;font-size:11px;color:var(--text-light);text-align:center;line-height:1.5;">La clave se guarda solo en este dispositivo y nunca se comparte.</div>
     </div>
   </div>
 
@@ -1638,7 +1652,7 @@ const COLORES_PRESET = [
 // ═══════════════════════════════════════════
 let DB = {
   sedes: [], visitas: [], incidencias: [], modulos: [], reuniones: [], notas: [], eventos: [], archivos: [],
-  config: { supervisor: '', adminPin: '1234', isAdmin: false, aiApiKey: '', aiModel: 'claude-haiku-4-5-20251001' }
+  config: { supervisor: '', adminPin: '1234', isAdmin: false, aiApiKey: '', aiModel: 'claude-haiku-4-5-20251001', aiProvider: 'anthropic', aiBaseUrl: '' }
 };
 let currentView = 'dashboard';
 let viewStack   = [];
@@ -2875,7 +2889,7 @@ function _renderAIPantalla(){
   if(tieneKey){
     setup.style.display='none';
     chat.style.display='flex';
-    document.getElementById('ai-model-label').textContent=DB.config.aiModel||'claude-haiku-4-5-20251001';
+    const provLabels={anthropic:'Anthropic',openai:'OpenAI',gemini:'Gemini',custom:'Custom'};document.getElementById('ai-model-label').textContent=(provLabels[DB.config.aiProvider||'anthropic']||'')+' · '+(DB.config.aiModel||'claude-haiku-4-5-20251001');
     if(aiHistorial.length===0){
       aiHistorial.push({role:'assistant',content:'¡Hola! Soy tu asistente de supervisión. Puedo ayudarte a:\n\n📊 **Consultar estado** de visitas, incidencias y sede\n📅 **Crear eventos** desde texto o voz\n⚠️ **Registrar incidencias** o notas\n📋 **Generar informes** semanales o por sede\n\n¿En qué te ayudo hoy?'});
     }
@@ -2884,7 +2898,54 @@ function _renderAIPantalla(){
     setup.style.display='flex';
     chat.style.display='none';
     document.getElementById('ai-key-input').value=DB.config.aiApiKey||'';
-    document.getElementById('ai-model-select').value=DB.config.aiModel||'claude-haiku-4-5-20251001';
+    document.getElementById('ai-provider-select').value=DB.config.aiProvider||'anthropic';
+    document.getElementById('ai-baseurl-input').value=DB.config.aiBaseUrl||'';
+    _aiProviderChange();
+  }
+}
+
+const AI_MODELS={
+  anthropic:[
+    {val:'claude-haiku-4-5-20251001',label:'Claude Haiku — Rápido y económico'},
+    {val:'claude-sonnet-4-6',label:'Claude Sonnet — Equilibrado'},
+    {val:'claude-opus-4-8',label:'Claude Opus — Más capaz'},
+  ],
+  openai:[
+    {val:'gpt-4o-mini',label:'GPT-4o Mini — Rápido y económico'},
+    {val:'gpt-4o',label:'GPT-4o — Equilibrado'},
+    {val:'gpt-4-turbo',label:'GPT-4 Turbo — Potente'},
+    {val:'gpt-3.5-turbo',label:'GPT-3.5 Turbo — Clásico'},
+  ],
+  gemini:[
+    {val:'gemini-2.0-flash',label:'Gemini 2.0 Flash — Rápido'},
+    {val:'gemini-1.5-flash',label:'Gemini 1.5 Flash — Equilibrado'},
+    {val:'gemini-1.5-pro',label:'Gemini 1.5 Pro — Potente'},
+  ],
+  custom:[],
+};
+
+function _aiProviderChange(){
+  const prov=document.getElementById('ai-provider-select')?.value||'anthropic';
+  const models=AI_MODELS[prov]||[];
+  const sel=document.getElementById('ai-model-select');
+  const customIn=document.getElementById('ai-model-custom');
+  const baseGrp=document.getElementById('ai-baseurl-group');
+  const keyHint=document.getElementById('ai-key-label-hint');
+  if(sel){
+    if(models.length){
+      sel.style.display='block';
+      sel.innerHTML=models.map(m=>`<option value="${m.val}">${m.label}</option>`).join('');
+      if(DB.config.aiModel&&models.find(m=>m.val===DB.config.aiModel))sel.value=DB.config.aiModel;
+      if(customIn)customIn.style.display='none';
+    } else {
+      sel.style.display='none';
+      if(customIn){customIn.style.display='block';customIn.value=DB.config.aiModel||'';}
+    }
+  }
+  if(baseGrp)baseGrp.style.display=prov==='custom'?'block':'none';
+  if(keyHint){
+    const hints={anthropic:'sk-ant-…',openai:'sk-…',gemini:'AIza…',custom:'opcional'};
+    keyHint.textContent='('+hints[prov]+')';
   }
 }
 
@@ -2892,15 +2953,24 @@ function abrirAIConfig(){
   document.getElementById('ai-setup').style.display='flex';
   document.getElementById('ai-chat').style.display='none';
   document.getElementById('ai-key-input').value=DB.config.aiApiKey||'';
-  document.getElementById('ai-model-select').value=DB.config.aiModel||'claude-haiku-4-5-20251001';
+  document.getElementById('ai-provider-select').value=DB.config.aiProvider||'anthropic';
+  document.getElementById('ai-baseurl-input').value=DB.config.aiBaseUrl||'';
+  _aiProviderChange();
 }
 
 function guardarAIConfig(){
   const key=document.getElementById('ai-key-input').value.trim();
-  const model=document.getElementById('ai-model-select').value;
-  if(!key){alert('Introduce una API key de Anthropic válida (empieza por sk-ant-).');return;}
+  const prov=document.getElementById('ai-provider-select').value;
+  const customIn=document.getElementById('ai-model-custom');
+  const sel=document.getElementById('ai-model-select');
+  const model=(prov==='custom'?customIn?.value.trim():sel?.value)||'';
+  const baseUrl=document.getElementById('ai-baseurl-input')?.value.trim()||'';
+  if(!key&&prov!=='custom'){alert('Introduce una API key válida.');return;}
+  if(!model){alert('Selecciona o escribe un modelo.');return;}
   DB.config.aiApiKey=key;
   DB.config.aiModel=model;
+  DB.config.aiProvider=prov;
+  DB.config.aiBaseUrl=baseUrl;
   saveDB();
   aiHistorial=[];
   _renderAIPantalla();
@@ -2967,31 +3037,53 @@ async function enviarMsgAI(){
 }
 
 async function _llamarAnthropicAPI(userMsg){
-  const apiKey=DB.config.aiApiKey;
+  return _llamarAPI(userMsg);
+}
+
+async function _llamarAPI(userMsg){
+  const apiKey=DB.config.aiApiKey||'';
   const model=DB.config.aiModel||'claude-haiku-4-5-20251001';
-  // Construir mensajes para la API (últimos 20 turnos)
+  const prov=DB.config.aiProvider||'anthropic';
+  const baseUrl=DB.config.aiBaseUrl||'';
+  const sysprompt=_buildSystemPromptAI();
   const msgs=aiHistorial.slice(-20).map(m=>({role:m.role,content:m.content}));
-  const resp=await fetch('https://api.anthropic.com/v1/messages',{
-    method:'POST',
-    headers:{
-      'x-api-key':apiKey,
-      'anthropic-version':'2023-06-01',
-      'anthropic-dangerous-direct-browser-access':'true',
-      'content-type':'application/json',
-    },
-    body:JSON.stringify({
-      model,
-      max_tokens:2048,
-      system:_buildSystemPromptAI(),
-      messages:msgs,
-    })
-  });
-  if(!resp.ok){
-    const err=await resp.json().catch(()=>({}));
-    throw new Error(err.error?.message||`HTTP ${resp.status}`);
+
+  // ── Anthropic ──────────────────────────────────────
+  if(prov==='anthropic'){
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true','content-type':'application/json'},
+      body:JSON.stringify({model,max_tokens:2048,system:sysprompt,messages:msgs})
+    });
+    if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+resp.status);}
+    const d=await resp.json();
+    return d.content[0]?.text||'';
   }
-  const data=await resp.json();
-  return data.content[0]?.text||'';
+
+  // ── OpenAI / Custom (OpenAI-compatible) ────────────
+  if(prov==='openai'||prov==='custom'){
+    const url=prov==='custom'?(baseUrl.replace(/\/$/,'')+'/chat/completions'):'https://api.openai.com/v1/chat/completions';
+    const headers={'content-type':'application/json'};
+    if(apiKey)headers['Authorization']='Bearer '+apiKey;
+    const body={model,max_tokens:2048,messages:[{role:'system',content:sysprompt},...msgs]};
+    const resp=await fetch(url,{method:'POST',headers,body:JSON.stringify(body)});
+    if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+resp.status);}
+    const d=await resp.json();
+    return d.choices[0]?.message?.content||'';
+  }
+
+  // ── Google Gemini ──────────────────────────────────
+  if(prov==='gemini'){
+    const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const contents=msgs.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
+    const body={systemInstruction:{parts:[{text:sysprompt}]},contents,generationConfig:{maxOutputTokens:2048}};
+    const resp=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+resp.status);}
+    const d=await resp.json();
+    return d.candidates?.[0]?.content?.parts?.[0]?.text||'';
+  }
+
+  throw new Error('Proveedor de IA no reconocido: '+prov);
 }
 
 function _buildSystemPromptAI(){
