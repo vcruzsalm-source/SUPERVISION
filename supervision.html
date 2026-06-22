@@ -1480,7 +1480,11 @@ body {
     </div>
 
     <input type="hidden" id="reunion-edit-id">
-    <div style="display:flex;gap:10px;margin-top:14px;">
+    <button id="btn-minuta-reunion" class="btn btn-full" onclick="generarMinutaReunion()"
+      style="margin-top:14px;background:#0d9488;color:white;font-weight:700;display:none;">
+      📄 Generar minuta de reunión
+    </button>
+    <div style="display:flex;gap:10px;margin-top:10px;">
       <button class="btn btn-primary btn-full" onclick="guardarReunion()">💾 Guardar</button>
       <button class="btn btn-ghost" onclick="cerrarModalReunion()" style="min-width:90px;">Cancelar</button>
     </div>
@@ -1658,6 +1662,7 @@ let currentView = 'dashboard';
 let viewStack   = [];
 let currentVisita     = null;
 let currentModuloIdx  = null;
+let _currentSedeDetalle = null;
 let incFiltro         = 'todas';
 let pinBuffer         = '';
 let selectedColor     = '#3b82f6';
@@ -1756,8 +1761,12 @@ function _showView(view) {
 function goBack() {
   if (viewStack.length > 0) {
     const prev = viewStack.pop();
-    _showView(prev);
-    if (prev === 'modulos') renderModulos();
+    if (prev === 'detalle' && _currentSedeDetalle) {
+      verDetalleSede(_currentSedeDetalle);
+    } else {
+      _showView(prev);
+      if (prev === 'modulos') renderModulos();
+    }
   }
 }
 
@@ -2119,6 +2128,7 @@ function verVisitasMes(){
 // DETALLE DE SEDE
 // ═══════════════════════════════════════════
 function verDetalleSede(sedeId) {
+  _currentSedeDetalle = sedeId;
   const sede    = DB.sedes.find(s => s.id === sedeId); if (!sede) return;
   const visitas = DB.visitas.filter(v => v.sedeId===sedeId && v.completada)
     .sort((a,b) => new Date(b.fecha)-new Date(a.fecha));
@@ -2518,7 +2528,7 @@ function renderResumenById(visitaId) {
       </div>
     </div>
     <div style="display:flex;gap:10px;margin-top:14px;">
-      <button class="btn btn-ghost btn-full" onclick="navTo('dashboard')">← Inicio</button>
+      <button class="btn btn-ghost btn-full" onclick="verDetalleSede('${visita.sedeId}')">← Ver sede</button>
       <button class="btn btn-primary" style="flex:1;" onclick="exportarPDF('${visitaId}')">📄 PDF</button>
     </div>`;
   document.getElementById('resumen-content').innerHTML = html;
@@ -2730,7 +2740,7 @@ function reunionModo(modo){
   document.getElementById('reunion-tab-notas').style.color=esGrab?'var(--text-light)':'white';
   if(!esGrab)detenerGrabacion();
 }
-function abrirNuevaReunion(){_resetModalReunion();document.getElementById('reunion-modal-title').textContent='Nueva reunión';document.getElementById('reunion-edit-id').value='';_poblarSedesReunion();_checkSRSupport();reunionModo('grabacion');document.getElementById('modal-reunion').classList.add('open');_actualizarReunionWorkers();}
+function abrirNuevaReunion(){_resetModalReunion();document.getElementById('reunion-modal-title').textContent='Nueva reunión';document.getElementById('reunion-edit-id').value='';_poblarSedesReunion();_checkSRSupport();reunionModo('grabacion');document.getElementById('btn-minuta-reunion').style.display='none';document.getElementById('modal-reunion').classList.add('open');_actualizarReunionWorkers();}
 function abrirVerReunion(id){
   const r=DB.reuniones.find(r=>r.id===id);if(!r)return;
   _resetModalReunion();
@@ -2753,6 +2763,7 @@ function abrirVerReunion(id){
     document.getElementById('rec-timer').textContent=formatTimer(srSegundos);
     document.getElementById('transcript-live').textContent=r.transcripcion||'';
   }
+  document.getElementById('btn-minuta-reunion').style.display='block';
   document.getElementById('modal-reunion').classList.add('open');
 }
 function _poblarSedesReunion(sel){const s=document.getElementById('reunion-sede');s.innerHTML='<option value="">— Sin sede —</option>'+DB.sedes.map(x=>`<option value="${x.id}"${x.id===sel?' selected':''}>${escHtml(x.nombre)}</option>`).join('');}
@@ -2789,6 +2800,111 @@ function guardarReunion(){
   if(currentView==='reuniones')renderReuniones();
   if(currentView==='dashboard')renderDashboard();
 }
+// ═══════════════════════════════════════════
+// MINUTA DE REUNIÓN
+// ═══════════════════════════════════════════
+async function generarMinutaReunion(){
+  const editId=document.getElementById('reunion-edit-id').value;
+  const r=editId?DB.reuniones.find(x=>x.id===editId):null;
+  const titulo=document.getElementById('reunion-titulo').value.trim()||(r?.titulo)||'Reunión';
+  const participantes=document.getElementById('reunion-participantes').value.trim()||(r?.participantes)||'';
+  const sedeId=document.getElementById('reunion-sede').value||(r?.sedeId)||'';
+  const sede=DB.sedes.find(s=>s.id===sedeId);
+  const fecha=r?.fecha?formatDate(r.fecha):new Date().toLocaleDateString('es-ES',{day:'2-digit',month:'long',year:'numeric'});
+  const supervisor=DB.config.supervisor||'—';
+  const esNotas=_reunionModoActual==='notas';
+  const datos={
+    notaOrden:    esNotas?(document.getElementById('reunion-nota-orden').value.trim())   :(r?.notaOrden||''),
+    notaAcuerdos: esNotas?(document.getElementById('reunion-nota-acuerdos').value.trim()):(r?.notaAcuerdos||''),
+    notaPendientes:esNotas?(document.getElementById('reunion-nota-pendientes').value.trim()):(r?.notaPendientes||''),
+    notaObs:      esNotas?(document.getElementById('reunion-nota-obs').value.trim())     :(r?.notaObs||''),
+    transcripcion:!esNotas?(document.getElementById('reunion-transcripcion').value.trim()||document.getElementById('transcript-live').textContent.trim()):(r?.transcripcion||''),
+    notas:        !esNotas?(document.getElementById('reunion-notas').value.trim())       :(r?.notas||''),
+  };
+  cerrarModal('modal-reunion');
+  const apiKey=DB.config.aiApiKey||'';
+  if(apiKey){
+    mostrarDetalle(`<div class="loader"><div class="spinner"></div> Generando minuta…</div>`,'📄 Minuta de reunión');
+    try{
+      const txt=await _minutaLlamarIA(titulo,fecha,sede?.nombre||'',participantes,supervisor,datos);
+      mostrarDetalle(_minutaRenderHTML(titulo,fecha,sede?.nombre,participantes,supervisor,txt,null),'📄 Minuta de reunión');
+      return;
+    }catch(e){console.warn('Minuta IA error:',e);}
+  }
+  mostrarDetalle(_minutaRenderHTML(titulo,fecha,sede?.nombre,participantes,supervisor,null,datos),'📄 Minuta de reunión');
+}
+
+async function _minutaLlamarIA(titulo,fecha,sedeNombre,participantes,supervisor,datos){
+  const prov=DB.config.aiProvider||'anthropic';
+  const apiKey=DB.config.aiApiKey||'';
+  const model=DB.config.aiModel||'claude-haiku-4-5-20251001';
+  const baseUrl=DB.config.aiBaseUrl||'';
+  const prompt=`Genera una minuta de reunión formal y profesional en español con los siguientes datos. Usa texto estructurado con títulos en MAYÚSCULAS, sin markdown (sin #, sin *, sin guiones como viñeta). Sé conciso y claro.
+
+REUNIÓN: ${titulo}
+FECHA: ${fecha}
+SEDE: ${sedeNombre||'—'}
+PARTICIPANTES: ${participantes||'—'}
+SUPERVISOR/RESPONSABLE: ${supervisor}
+${datos.notaOrden?'\nORDEN DEL DÍA:\n'+datos.notaOrden:''}
+${datos.notaAcuerdos?'\nACUERDOS TOMADOS:\n'+datos.notaAcuerdos:''}
+${datos.notaPendientes?'\nPENDIENTES Y ACCIONES:\n'+datos.notaPendientes:''}
+${datos.notaObs?'\nOBSERVACIONES:\n'+datos.notaObs:''}
+${datos.transcripcion?'\nTRANSCRIPCIÓN:\n'+datos.transcripcion.substring(0,2000):''}
+${datos.notas?'\nNOTAS:\n'+datos.notas:''}`;
+  const msgs=[{role:'user',content:prompt}];
+  if(prov==='anthropic'){
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true','content-type':'application/json'},body:JSON.stringify({model,max_tokens:2048,messages:msgs})});
+    if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+resp.status);}
+    return (await resp.json()).content[0]?.text||'';
+  }
+  if(prov==='openai'||prov==='custom'){
+    const url=prov==='custom'?(baseUrl.replace(/\/$/,'')+'/chat/completions'):'https://api.openai.com/v1/chat/completions';
+    const headers={'content-type':'application/json'};if(apiKey)headers['Authorization']='Bearer '+apiKey;
+    const resp=await fetch(url,{method:'POST',headers,body:JSON.stringify({model,max_tokens:2048,messages:msgs})});
+    if(!resp.ok)throw new Error('HTTP '+resp.status);
+    return (await resp.json()).choices[0]?.message?.content||'';
+  }
+  if(prov==='gemini'){
+    const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const resp=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:2048}})});
+    if(!resp.ok)throw new Error('HTTP '+resp.status);
+    return (await resp.json()).candidates?.[0]?.content?.parts?.[0]?.text||'';
+  }
+  throw new Error('Proveedor no soportado');
+}
+
+function _minutaRenderHTML(titulo,fecha,sedeNombre,participantes,supervisor,textAI,datos){
+  const ahora=new Date().toLocaleString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  const sec=(icon,label,val)=>val?`<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;">${icon} ${label}</div><div style="background:var(--bg);border-radius:8px;padding:12px;font-size:14px;line-height:1.6;white-space:pre-wrap;">${escHtml(val)}</div></div>`:'';
+  const cuerpo=textAI
+    ?`<div style="background:var(--bg);border-radius:10px;padding:16px;font-size:14px;line-height:1.75;white-space:pre-wrap;">${escHtml(textAI)}</div>`
+    :(datos?(sec('📋','Orden del día',datos.notaOrden)+sec('✅','Acuerdos tomados',datos.notaAcuerdos)+sec('⏳','Pendientes y acciones',datos.notaPendientes)+sec('💬','Observaciones',datos.notaObs)+sec('🎙','Transcripción',datos.transcripcion)+sec('📌','Notas',datos.notas))||'<div style="text-align:center;color:var(--text-light);padding:20px;">Sin contenido registrado</div>':'');
+  return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:700;color:var(--text-light);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">MINUTA DE REUNIÓN</div>
+      <div style="font-size:19px;font-weight:800;margin-bottom:12px;">${escHtml(titulo)}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:13px;color:var(--text-light);">
+        <div>📅 <strong>Fecha:</strong> ${fecha}</div>
+        ${sedeNombre?`<div>🏢 <strong>Sede:</strong> ${escHtml(sedeNombre)}</div>`:''}
+        ${participantes?`<div style="grid-column:1/-1;">👥 <strong>Participantes:</strong> ${escHtml(participantes)}</div>`:''}
+        <div>👤 <strong>Responsable:</strong> ${escHtml(supervisor)}</div>
+      </div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px;">${cuerpo}</div>
+    <div style="font-size:11px;color:var(--text-light);text-align:center;margin-bottom:12px;">Generada el ${ahora} · SUPERVISION</div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn btn-ghost btn-full" onclick="copiarMinuta(this)">📋 Copiar</button>
+      <button class="btn btn-ghost btn-full" onclick="window.print()">🖨 Imprimir</button>
+    </div>`;
+}
+
+function copiarMinuta(btn){
+  const el=document.getElementById('detalle-content');
+  const txt=el?el.innerText:'';
+  navigator.clipboard.writeText(txt).then(()=>{const o=btn.textContent;btn.textContent='✓ Copiado';setTimeout(()=>btn.textContent=o,2000);}).catch(()=>alert('Selecciona el texto manualmente para copiarlo.'));
+}
+
 function toggleGrabacion(){if(srEstaGrabando)detenerGrabacion();else iniciarGrabacion();}
 function iniciarGrabacion(){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){alert('Reconocimiento de voz no disponible. Usa Chrome/Edge con internet.');return;}try{srRecognition=new SR();srRecognition.lang='es-ES';srRecognition.continuous=true;srRecognition.interimResults=true;srRecognition.onstart=()=>{srEstaGrabando=true;document.getElementById('rec-btn').className='rec-btn recording';document.getElementById('rec-btn').textContent='⏹';document.getElementById('rec-status').textContent='🔴 Grabando...';document.getElementById('transcript-live').classList.add('active-border');_iniciarTimerReunion();};srRecognition.onresult=(e)=>{let interim='';for(let i=e.resultIndex;i<e.results.length;i++){if(e.results[i].isFinal)srTransFinal+=e.results[i][0].transcript+' ';else interim+=e.results[i][0].transcript;}srTransInterim=interim;_actualizarTranscriptLive();};srRecognition.onerror=(e)=>{if(e.error==='no-speech'||e.error==='aborted')return;document.getElementById('rec-status').textContent='⚠️ '+e.error;};srRecognition.onend=()=>{if(srEstaGrabando){try{srRecognition.start();}catch(ex){}}};srRecognition.start();}catch(ex){alert('Error: '+ex.message);}}
 function detenerGrabacion(){if(srTimerRef){clearInterval(srTimerRef);srTimerRef=null;}if(srRecognition){srEstaGrabando=false;try{srRecognition.stop();}catch(ex){}srRecognition=null;}srEstaGrabando=false;const btn=document.getElementById('rec-btn');if(btn){btn.className='rec-btn idle';btn.textContent='🎙';}const st=document.getElementById('rec-status');if(st)st.textContent=srSegundos>0?'Grabación detenida.':'Pulsa para iniciar grabación';const tl=document.getElementById('transcript-live');if(tl)tl.classList.remove('active-border');if(srTransFinal.trim()){const te=document.getElementById('reunion-transcripcion');if(te&&!te.value.trim())te.value=srTransFinal.trim();}}
@@ -3096,7 +3212,7 @@ function _buildSystemPromptAI(){
     incidencias_abiertas:DB.incidencias.filter(i=>i.estado==='abierta').map(i=>({id:i.id,titulo:i.titulo,tipo:i.tipo,prioridad:i.prioridad,sedeId:i.sedeId,fecha:i.fecha?.split('T')[0],categoria:i.categoria})),
     visitas_recientes:[...DB.visitas].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,20).map(v=>({id:v.id,sedeId:v.sedeId,fecha:v.fecha?.split('T')[0],supervisor:v.supervisor,completada:v.completada,score:calcScore(v)})),
     eventos_proximos:DB.eventos.filter(e=>e.fecha>=hoy).sort((a,b)=>a.fecha>b.fecha?1:-1).slice(0,20),
-    reuniones_recientes:[...DB.reuniones].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,8).map(r=>({id:r.id,titulo:r.titulo,sedeId:r.sedeId,fecha:r.fecha?.split('T')[0]})),
+    reuniones_recientes:[...DB.reuniones].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,10).map(r=>({id:r.id,titulo:r.titulo,sedeId:r.sedeId,fecha:r.fecha?.split('T')[0],participantes:r.participantes||[],notaOrden:(r.notaOrden||'').substring(0,500),notaAcuerdos:(r.notaAcuerdos||'').substring(0,500),notaPendientes:(r.notaPendientes||'').substring(0,500),notaObs:(r.notaObs||'').substring(0,500),transcripcion:(r.transcripcion||'').substring(0,400),duracion:r.duracion||0})),
     notas_recientes:[...DB.notas].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,10).map(n=>({id:n.id,etiqueta:n.etiqueta||'',contenido:(n.contenido||n.transcripcion||'').substring(0,300),fecha:n.fecha?.split('T')[0],sedeId:n.sedeId||''})),
   };
   return `Eres el asistente IA de la app SUPERVISION, usada por ${ctx.supervisor}. Hoy es ${hoy} a las ${hora}.
@@ -3427,13 +3543,13 @@ function guardarItemsMod(){
 function toggleDarkMode(){
   const dark=document.documentElement.getAttribute('data-theme')==='dark';
   document.documentElement.setAttribute('data-theme',dark?'light':'dark');
-  document.getElementById('btn-darkmode').textContent=dark?'&#x1F319;':'&#x2600;&#xFE0F;';
+  document.getElementById('btn-darkmode').textContent=dark?'🌙':'☀️';
   DB.config.darkMode=!dark;saveDB();
 }
 function _aplicarDarkMode(){
   if(DB.config.darkMode){
     document.documentElement.setAttribute('data-theme','dark');
-    const btn=document.getElementById('btn-darkmode');if(btn)btn.textContent='&#x2600;&#xFE0F;';
+    const btn=document.getElementById('btn-darkmode');if(btn)btn.textContent='☀️';
   }
 }
 
